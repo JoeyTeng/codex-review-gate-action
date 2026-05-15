@@ -1,5 +1,7 @@
 # Codex Review Gate Advanced Design
 
+Languages: [British English (en-GB)](DESIGN.md) | [简体中文 (zh-CN)](DESIGN.zh-CN.md)
+
 ## Goal
 
 `codex/review-gate` turns a controlled `@codex review` request into a deterministic commit status that can be required by branch protection. The status should remain `pending` or become `failure` unless the gate can prove that the current PR head has a clean Codex result.
@@ -68,7 +70,7 @@ The buffer applies only to Codex top-level clean completion comments because tho
 
 `eyes` reactions are liveness signals. The gate checks both PR-body reactions and reactions on the active marker comment. They move `WaitingAck` to `WaitingResult`, but they do not pass the gate.
 
-## Minutes Model
+## GHA Cost Model
 
 The happy path normally uses two short jobs:
 

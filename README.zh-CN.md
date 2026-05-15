@@ -70,6 +70,10 @@ jobs:
 - 只有 active marker 之后出现 Codex clean completion comment 或 `APPROVED` review，且当前 head 没有 Codex findings，才会通过。
 - Codex review output 可能不完整或不准确，不能替代 maintainer judgment。
 
+## 高级运行模型
+
+Event-driven review gate 的状态机、自动重试开关、**GHA 成本模型 (cost model)** 和手动恢复行为见 [DESIGN.zh-CN.md](DESIGN.zh-CN.md)。
+
 ## 反馈
 
 Action bug、gate 行为问题、文档问题或 Marketplace listing 问题，请在 [GitHub issues](https://github.com/JoeyTeng/codex-review-gate-action/issues) 反馈。如果 PR 收到有问题的 AI 生成 review 内容，请优先使用 GitHub 对具体 comment 或 review 的正常反馈/举报入口。

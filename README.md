@@ -1,6 +1,6 @@
 # Codex Review Gate
 
-Languages: [English (en-GB)](README.md) | [Simplified Chinese (zh-CN)](README.zh-CN.md)
+Languages: [British English (en-GB)](README.md) | [简体中文 (zh-CN)](README.zh-CN.md)
 
 `codex-review-gate` is a reusable GitHub Action that owns a deterministic `codex/review-gate` status check for pull requests reviewed by Codex. It keeps the status pending or failing until the current PR head has a clean Codex review signal.
 
@@ -23,6 +23,10 @@ The runner implements an event-driven serialized marker flow:
 - Treats Codex reactions as diagnostic signals only; `eyes` reactions on the active marker comment count as liveness, not pass.
 - Uses scheduled or manual resume runs to retry unacknowledged or stalled markers.
 - Passes only after a Codex top-level clean completion comment or `APPROVED` review appears after the active marker and the current head has no Codex findings.
+
+## Advanced Operation
+
+For the event-driven review-gate design, state machine, automatic retry controls, **GHA cost model**, and manual recovery behaviour, see [DESIGN.md](DESIGN.md).
 
 ## Workflow Usage
 
