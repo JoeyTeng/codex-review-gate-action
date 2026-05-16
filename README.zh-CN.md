@@ -115,7 +115,7 @@ jobs:
     runs-on: ${{ fromJSON(vars.CODEX_REVIEW_GATE_RUNNER_LABELS || '["ubuntu-slim"]') }}
     timeout-minutes: 15
     steps:
-      - uses: JoeyTeng/codex-review-gate-action@v1
+      - uses: JoeyTeng/codex-review-gate-action@v1.2
         with:
           github-token: ${{ github.token }}
           pull-request: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pull_request }}
