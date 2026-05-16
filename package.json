@@ -10,5 +10,5 @@
     "type": "git",
     "url": "git+https://github.com/JoeyTeng/codex-review-gate-action.git"
   },
-  "license": "MIT"
+  "license": "Apache-2.0"
 }
