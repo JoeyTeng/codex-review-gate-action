@@ -8,7 +8,7 @@
 
 ## 生成式 AI 提醒
 
-这个 action 会请求并评估 Codex 生成式 AI review output。当它发布受控 `@codex review` marker comment 时，Codex 可能会在 pull request 中回复 AI-generated comments 或 reviews。在把 AI-generated output 用于安全性、正确性或合并决策前，请先人工 review 和验证。
+这个 action 会请求并评估 Codex 生成式 AI review output。它会保持受控 `@codex review` marker comments 最小化，以便 command parsing 更可靠；请求 review 时，会把此 disclosure 写入 GitHub Actions step summary。Codex 可能会在 pull request 中回复 AI-generated comments 或 reviews。在把 AI-generated output 用于安全性、正确性或合并决策前，请先人工 review 和验证。
 
 Action 本身不会执行 pull request 代码。它只协调 GitHub comments、reviews、reactions 和 commit statuses，让仓库维护者可以把 Codex review 作为 required branch-protection signal。
 
@@ -21,7 +21,7 @@ Runner 实现了 event-driven serialized marker flow：
 - 当 current-head Codex inline review threads 或 review-body findings 未 resolved 且未 outdated 时失败。
 - 用 hidden metadata 维护一个可信 sticky PR state comment。
 - 串行维护受控 `@codex review` marker comments。
-- 每条受控 marker comment 都包含可见 AI notice。
+- 保持受控 marker comments 最小化，并把生成式 AI review 提示写入 GitHub Actions step summary。
 - 把 Codex reactions 只作为诊断信号。
 - 用 scheduled 或 manual resume runs 重试未 ack 或 stalled 的 markers。
 - 只有在 active marker 之后出现 Codex top-level completion comment 或 `APPROVED` review，且当前 head 没有 Codex findings 时才通过。

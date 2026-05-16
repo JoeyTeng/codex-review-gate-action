@@ -8,7 +8,7 @@ Target repositories keep a thin workflow at `.github/workflows/codex-review-gate
 
 ## Generative AI Notice
 
-This action requests and evaluates Codex generative AI review output. When it posts a controlled `@codex review` marker comment, Codex may respond with AI-generated comments or reviews on the pull request. Review and verify AI-generated output before relying on it for security, correctness, or merge decisions.
+This action requests and evaluates Codex generative AI review output. It keeps controlled `@codex review` marker comments minimal for reliable command parsing, and writes this disclosure to the GitHub Actions step summary when it requests a review. Codex may respond with AI-generated comments or reviews on the pull request. Review and verify AI-generated output before relying on it for security, correctness, or merge decisions.
 
 The action itself does not execute pull request code. It coordinates GitHub comments, reviews, reactions, and commit statuses so repository maintainers can make Codex review a required branch-protection signal.
 
@@ -21,7 +21,7 @@ The runner implements an event-driven serialized marker flow:
 - Fails when current-head Codex inline review threads or review-body findings are unresolved and not outdated.
 - Keeps a trusted sticky PR state comment with hidden metadata.
 - Serializes controlled `@codex review` marker comments.
-- Includes a visible AI notice in every controlled marker comment.
+- Keeps controlled marker comments minimal and writes the generative AI review disclosure to the GitHub Actions step summary.
 - Treats Codex reactions as diagnostic signals only; `eyes` reactions on the active marker comment count as liveness, not pass.
 - Uses scheduled or manual resume runs to retry unacknowledged or stalled markers.
 - Passes only after a Codex top-level clean completion comment or `APPROVED` review appears after the active marker and the current head has no Codex findings. Top-level completion comments must also satisfy the configured completion signal buffer.
