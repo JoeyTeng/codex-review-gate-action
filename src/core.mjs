@@ -1403,14 +1403,9 @@ function cleanTaglineHasPresentationGrammar(value) {
   return emojiCount > 0 && !previousWasSpace;
 }
 
-function officialCodexDisclosureHasClosedGrammar(value) {
-  const normalized = value
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join("\n");
-  return normalized === [
+const OFFICIAL_CODEX_DISCLOSURE_VARIANTS = [
+  // Legacy disclosure (observed through 2026-07).
+  [
     "<details> <summary>ℹ️ About Codex in GitHub</summary>",
     "<br/>",
     "Codex has been enabled to automatically review pull requests in this repo. Reviews are triggered when you",
@@ -1420,7 +1415,29 @@ function officialCodexDisclosureHasClosedGrammar(value) {
     "If Codex has suggestions, it will comment; otherwise it will react with 👍.",
     "When you [sign up for Codex through ChatGPT](https://openai.com/codex), Codex can also answer questions or update the PR, like \"@codex address that feedback\".",
     "</details>",
-  ].join("\n");
+  ].join("\n"),
+  // Disclosure observed from 2026-08-01.
+  [
+    "<details> <summary>ℹ️ About Codex in GitHub</summary>",
+    "<br/>",
+    "[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you",
+    "- Open a pull request for review",
+    "- Mark a draft as ready",
+    '- Comment "@codex review".',
+    "If Codex has suggestions, it will comment; otherwise it will react with 👍.",
+    'Codex can also answer questions or update the PR. Try commenting "@codex address that feedback".',
+    "</details>",
+  ].join("\n"),
+];
+
+function officialCodexDisclosureHasClosedGrammar(value) {
+  const normalized = value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+  return OFFICIAL_CODEX_DISCLOSURE_VARIANTS.includes(normalized);
 }
 
 function approvedReviewCleanBodyHasClosedGrammar(body) {
