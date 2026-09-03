@@ -1,567 +1,438 @@
-# Codex Review Gate
+# Codex Review Gate v2
 
 Languages: [British English (en-GB)](README.md) | [简体中文 (zh-CN)](README.zh-CN.md)
 
-## QuickStart
+Codex Review Gate reduces trusted OpenAI Codex review evidence for one pull
+request to the native required CheckRun `codex/github-review-gate`. GitHub
+records the verifier run/job/CheckRun against the exact PR feature-head SHA.
+The canonical `pull_request` verifier still executes on
+`refs/pull/N/merge`; inside the Action it strictly validates `GITHUB_REF`,
+`GITHUB_SHA`, the event head/base/test-merge SHAs and a fresh PR read. A
+protected top-level `run-name` makes GitHub expose
+`codex-review-gate-verifier/<PR>/<current test-merge SHA>` as the run's exact
+`display_title`; activation also requires the run's sole PR binding to contain
+the current feature head and default-branch base SHA. These receipts bind a
+successful feature-head CheckRun to the exact current test-merge, even though
+the CheckRun itself is not attached to the test-merge SHA. Every verifier run
+rebuilds its decision from GitHub. A
+database, workflow artifact, sticky comment, controller run or earlier
+verifier is never decision authority.
 
-1. Copy the thin caller in [Workflow Usage](#workflow-usage) to
-   `.github/workflows/codex-review-gate.yml`.
-2. Keep its canonical reusable-workflow reference at
-   `JoeyTeng/codex-review-gate-action/.github/workflows/codex-review-gate.yml@v1`,
-   merge it to the default branch, then open a follow-up test PR.
-3. After `codex/review-gate` behaves as expected, add it as a required status check. For recovery recipes, see the [cookbook](COOKBOOK.md).
+The public Action is released from
+[`JoeyTeng/codex-review-gate-action`](https://github.com/JoeyTeng/codex-review-gate-action).
+Canonical source, tests and release automation live in
+[`Joey-Tools/codex-review-gate`](https://github.com/Joey-Tools/codex-review-gate).
 
-> [!IMPORTANT]
-> The reusable caller is staged for the v1.5 rollout. The immutable v1.5.0
-> release exists, but its live canary exposed an incorrect commit-versus-tag
-> object admission contract. Consumers must fail closed on v1.5.0; there is no
-> digest-keyed erratum. Do not activate the source repository or template
-> caller until the compatible v1.5.1 repair and provenance asset are published,
-> the `v1.5` and `v1` aliases are verified, and a new live canary passes. That
-> activation belongs in a separate follow-up PR; until then, the existing source
-> and template callers remain unchanged.
+## Install the complete consumer contract
 
-`codex-review-gate` is a reusable GitHub workflow backed by a composite Action.
-It owns a deterministic
-`codex/review-gate` status check. It passes only from a complete evidence
-snapshot when the latest official, trusted provider artifact is a
-closed-grammar clean result bound to the current PR head and every
-blocking Codex finding is cleared. Here, pass means only that this required
-commit status is `success`; it never attests a named triple review or the PR's
-overall merge readiness.
-
-Target repositories keep a thin workflow at `.github/workflows/codex-review-gate.yml`; the review state machine lives in this action.
-
-## Generative AI Notice
-
-> [!NOTE]
-> This action requests and evaluates Codex generative AI review output. It keeps controlled `@codex review` marker comments minimal for reliable command parsing, and writes this disclosure to the GitHub Actions step summary when it requests a review. Codex may respond with AI-generated comments or reviews on the pull request. Review and verify AI-generated output before relying on it for security, correctness, or merge decisions.
->
-> The action itself does not execute pull request code. It coordinates GitHub comments, reviews, reactions, and commit statuses so repository maintainers can make Codex review a required branch-protection signal.
-
-## What It Checks
-
-The runner implements event-driven evidence reconciliation with a serialized
-marker flow for requesting reviews:
-
-- Runs under `pull_request_target` from the repository default branch.
-- Writes the configured commit status, `codex/review-gate` by default, to the PR head SHA.
-- Passes only from a complete, stable evidence reduction when the selected
-  official trusted clean artifact binds strongly to the current head and no
-  current-head or ancestor finding remains blocking. This is only the verdict
-  of the required `codex/review-gate` status, never proof of triple review or
-  merge readiness.
-- Treats `isOutdated` and `isResolved` independently. An exact joined review
-  thread for a current-head or ancestor finding remains blocking until its
-  authoritative `isResolved` value is exactly `true`; a later clean result
-  cannot supersede it.
-- Recognises unthreaded top-level finding comments from exact repository and
-  full-SHA blob links. An older same-head or ancestor unthreaded finding is
-  superseded only by the strictly later selected current-head clean artifact.
-  A finding proven to be on a non-ancestor is retained for audit but removed
-  from the reduction, which is then recomputed. For issue comments,
-  `created_at` and `updated_at` must be canonical, with
-  `updated_at >= created_at`, and `updated_at` is the revision time. Because
-  REST issue-comment timestamps have one-second granularity, two issue comments
-  in the same revision second are always ambiguous; even
-  `created_at == updated_at` cannot prove no same-second edit, and IDs never
-  break that tie. Same-time pull-request reviews may use the larger canonical
-  ID only within the review channel; cross-channel ties remain ambiguous.
-- Treats a clean bound to a proven ancestor as stale audit evidence and a clean
-  bound to a proved non-ancestor as audit-only evidence removed before
-  re-reduction. Only an ancestry relationship still unknown after bounded
-  retry writes stable `error` with `ancestry-unverified`.
-- Validates official provider identity and strong commit binding. A clean
-  issue comment contains exactly one `Reviewed commit` marker. A pull request
-  review binds through its native full `commit_id`, and any reviewed-commit
-  hash in its body must agree with that value.
-- Accepts clean results only through a closed provider grammar; finding-shaped content takes precedence over a clean-looking lead or `APPROVED` state.
-- Treats a configured provider's `Codex Review` comment, with an optional Markdown heading and emoji, as a broad terminal candidate. An exact valid one-line `in progress` / `still in progress` artifact, with an optional period or colon plus one to 160 metadata characters, keeps the existing marker and deadline pending without acknowledging, resetting, extending, or reposting it. A candidate such as `completed` is deterministically malformed and writes `error` rather than being ignored.
-- Rebuilds a complete evidence snapshot on every reconciliation. Historical
-  `pending` or `error` states and closed wait outcomes are audit-only. A
-  transient incomplete API or pagination attempt stops blocking only after a
-  complete current snapshot is rebuilt; malformed, identity, schema, and
-  commit parsing/binding errors still present in that snapshot remain global
-  blockers and cannot be superseded by a later clean.
-- Bounds each PR's evidence work to 64 MiB and 1,024 fetch attempts shared across snapshots and retries, with an 8 MiB streaming cap per response, 20,000 items per snapshot, and concurrency of four for HTTP and review-thread completion.
-- Keeps a trusted sticky PR state comment with hidden metadata.
-- Serializes controlled `@codex review` marker comments.
-- Keeps controlled marker comments minimal and writes the generative AI review disclosure to the GitHub Actions step summary.
-- Treats `+1` reactions as audit-only signals with no verdict authority.
-  `eyes` is liveness-only: it may move `waiting_ack` to `waiting_result`, but
-  it neither passes the gate nor extends any deadline.
-- Uses scheduled or manual resume runs to retry unacknowledged or stalled markers.
-- Fails closed when the current reconciliation cannot load or validate all
-  required evidence. Transient acquisition or reconciliation faults receive
-  bounded retries and then write stable `error`; deterministic malformed,
-  identity, schema, commit-binding, or `ancestry-unverified` faults write
-  `error` after their required bounded check.
-- Gives a confirmed current-head or ancestor finding precedence over a
-  simultaneous evidence error: the status remains `failure`, and its summary
-  mentions the evidence issue. `error` is used only when no confirmed blocking
-  finding is available.
-- Reconciles complete review evidence before applying marker wait deadlines.
-  Marker deadlines close or retry waits; they do not set an acceptance window
-  for provider artifacts. A valid current-head clean artifact created after a
-  marker deadline can pass on a later complete run.
-- Uses sticky state, controlled markers, baselines, deadlines, recovery mode,
-  and status history only for request orchestration, retry, liveness, audit,
-  and idempotency. None of them authorises or rejects provider evidence.
-- Before success, caches the newest same-context live status and its producer,
-  re-reads PR lifecycle and head, re-reads complete evidence, and repeats the
-  reduction. The head, PR state, complete evidence, and selected result must be
-  stable across final validation before the success write. The final reduction
-  certificate binds each selected or applicable issue-comment carrier's
-  `created_at`, `updated_at`, and carrier digest.
-- In receipt mode, always POSTs the computed status from the current run
-  attempt so the receipt can bind the new REST response. Outside receipt mode,
-  it may deduplicate only when the newest same-context record has the desired
-  state and comes from exact `github-actions[bot]` / `Bot`.
-- Migrates legacy marker and recovery fields for orchestration continuity
-  without using them as provider-evidence authority.
-- Accepts deprecated failed-findings recovery inputs for v1 interface
-  compatibility; their values no longer change gate decisions or request
-  orchestration.
-- Evaluates official automatic-review and controlled-request output under the
-  same identity, closed-grammar, current-head, and complete-snapshot rules.
-
-## Files
-
-- `action.yml`: composite action wrapper for the runner.
-- `.github/workflows/codex-review-gate.yml`: canonical GitHub.com reusable
-  workflow, including the trusted event filters and exact self-checkout.
-- `src/gate.mjs`: GitHub Actions runner script.
-- `src/core.mjs`: testable state and signal helpers.
-- `decision-table.json`: machine-readable authoritative reducer policy for
-  `policy_major: 1` and `policy_version: 1.4.0`.
-- `producer-receipt.schema.json`: producer receipt v1 JSON Schema.
-- `DESIGN.md`: target signal model, state machine, and GHA cost model.
-- `COOKBOOK.md`: normal operating path and failure recovery recipes.
-
-## Advanced Operation
-
-For the event-driven review-gate design, state machine, automatic retry controls, **GHA cost model**, and recovery behaviour, see [DESIGN.md](DESIGN.md). For operator recipes, see [COOKBOOK.md](COOKBOOK.md).
-
-The advanced design uses repository or organisation variables for controls that must take effect before a runner is allocated. For example, `CODEX_REVIEW_GATE_AUTO_RETRY=false` can skip scheduled retry jobs at the job `if` layer. Runtime `env` values are still useful for action behaviour after a job has started, but they cannot prevent GitHub Actions from assigning a runner.
-
-The current source-root direct workflow defaults to `ubuntu-slim`. Direct
-composite callers may set `CODEX_REVIEW_GATE_RUNNER_LABELS` to a JSON array such
-as `["self-hosted","linux","x64","codex-review-gate"]`; the canonical reusable
-workflow below deliberately ignores that variable and stays on `ubuntu-slim`.
-
-## Workflow Usage
+Consumers use the floating major:
 
 ```yaml
-name: Codex Review Gate
-
-on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
-  issue_comment:
-    types: [created]
-  pull_request_review:
-    types: [submitted]
-  pull_request_review_comment:
-    types: [created]
-  schedule:
-    - cron: "0 */2 * * *"
-  workflow_dispatch:
-    inputs:
-      pull_request:
-        description: Optional pull request number to gate
-        required: false
-        type: string
-
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
-  statuses: write
-
-concurrency:
-  group: codex-review-gate-${{ github.repository }}
-  cancel-in-progress: false
-
-jobs:
-  codex-review-gate:
-    name: codex/review-gate runner
-    uses: JoeyTeng/codex-review-gate-action/.github/workflows/codex-review-gate.yml@v1
+- uses: JoeyTeng/codex-review-gate-action@v2
 ```
 
-The caller deliberately keeps the complete event set, permission ceiling, and
-repository-wide concurrency group. The reusable workflow owns the trusted job
-filters, runner selection, timeout, exact called-repository checkout, and
-composite step. A reusable-workflow calling job cannot contain `runs-on` or
-`steps`. Do not duplicate the caller's repository-wide concurrency group in
-the called workflow; keep that cross-run serialisation boundary caller-side.
+That step alone is not an installation. The complete installation has three
+required repository asset groups:
 
-The called workflow receives the caller's `GITHUB_TOKEN` permissions and
-cannot elevate them, so no `secrets: inherit` is needed. The four read/write
-permissions above are the supported ceiling. The called workflow never checks
-out the pull request or executes its code.
+- the complete two-workflow bundle: the read-only
+  [canonical verifier](https://github.com/Joey-Tools/codex-review-gate/blob/master/templates/codex-gated-repo/.github/workflows/codex-review-gate.yml)
+  and protected-default-branch
+  [canonical controller](https://github.com/Joey-Tools/codex-review-gate/blob/master/templates/codex-gated-repo/.github/workflows/codex-review-gate-controller.yml);
+- a managed `.github/CODEOWNERS` control plane whose two final effective rules
+  protect `/.github/workflows/` and `/.github/CODEOWNERS`; and
+- the supplied
+  [disabled ruleset template](https://github.com/Joey-Tools/codex-review-gate/blob/master/templates/codex-gated-repo/rulesets/codex-review-gate.json).
 
-Reusable mode fixes `runs-on: ubuntu-slim`. Caller repository variables cannot
-select a self-hosted or otherwise different runner, so the GitHub-hosted runner
-is part of the trusted boundary for checkout output, worktree, and receipt
-production. Direct composite mode remains caller-owned and may keep its
-existing runner configuration. The GitHub-hosted boundary still is not a
-cryptographic signature, OIDC attestation, or content-addressed storage proof.
+Install them with the canonical
+[`bootstrap-codex-review-gate.mjs`](https://github.com/Joey-Tools/codex-review-gate/blob/master/scripts/bootstrap-codex-review-gate.mjs)
+helper, always passing an explicit `--control-plane-owner @USER`. Do not
+reconstruct the workflow or managed CODEOWNERS rules by hand. The selected
+owner must be a GitHub user with `write`, `maintain` or `admin` permission on
+the consumer repository. The first migration PR contains both canonical
+workflows and CODEOWNERS, not the ruleset mutation. Before merging it, keep
+every legacy requirement active, bind a canonical read-only legacy inventory
+SHA-256 into the owner approval snapshot and require a fresh identical inventory
+in the final transaction. The digest binds repository/default branch, each
+matching ruleset's full identity, source, enforcement, target, conditions,
+`bypass_actors`, and `rules`, its complete effective
+`required_status_checks` rule, and the complete classic required-status object
+including each check's producer `app_id`. Even an empty legacy inventory has a
+repository/branch-bound digest. Incomplete API/schema data or any drift fails
+closed. Then require the authenticated actor to be that owner, freshly reread
+the owner's exact-head approval, and use the synchronous
+exact-SHA merge endpoint. Immediately after merge, first reread the current
+default branch and require the PR to be merged with base and head still exactly
+the approved scope. If that readback fails, keep every legacy requirement
+active. After it succeeds, keep legacy active, stage a separate supplied v2
+ruleset as Disabled, prove it with a harmless canary, then activate and read
+back the exact complete Active policy. Every pre-cleanup stage/activation
+preview and apply must explicitly reuse the same owner-approved digest across
+processes through that Active readback. Only afterward may separately
+authorised cleanup remove the inventoried legacy requirements. Before cleanup,
+read-only `--derive-post-cleanup-plan` requires the same external
+owner-approved legacy-inventory digest through
+`--expected-legacy-inventory-sha256`, verifies that baseline against a
+complete security snapshot, and emits a canonical, human-reviewable plan plus
+an external expected post-cleanup security SHA-256. The only admissible delta
+removes `codex/review-gate`. An emptied classic required-status policy, an
+emptied ruleset status rule, and a dedicated legacy-only ruleset left with no
+rules are the only structures that may disappear. Repository/default head,
+workflow/CODEOWNERS inventory, owner permission, every field/non-legacy check
+including `strict` and `app_id` in a surviving classic policy, and every
+retained ruleset's identity, conditions, bypass actors, and unrelated rules are
+preserved exactly. After
+the separately authorised cleanup, read-only `--verify-post-cleanup` requires
+that external digest through `--expected-post-cleanup-security-sha256` and
+accepts only two identical complete security rounds,
+each matching the expected digest, showing both legacy surfaces clear and the
+same complete v2 policy Active. An inconclusive derivation, cleanup, or
+verification leaves v2 Active and calls only for read-only diagnostics; it is
+never a reason to disable or roll back v2.
+Approval plus a head reread alone is insufficient.
 
-Reusable receipt attribution also assumes that the caller workflow revision
-and its complete job graph are independently trusted. A same-run malicious
-sibling job can race to create the attempt-named artifact and write a matching
-status before the called job completes. Exact-attempt `referenced_workflows` is
-run-level corroboration and does not bind one job, callsite, or receipt.
-Therefore the validated chain supplies causal consistency only inside the
-trusted-caller plus fixed-hosted-runner boundary; it is not job-scoped
-cryptographic attribution.
+The copied workflows own separate triggers, typed dispatch inputs,
+permissions, concurrency namespaces and runner-free event filtering. The
+verifier's GitHub-managed job CheckRun is the stable required signal. A
+reusable workflow and a commit-status bridge are not the v2 consumer ABI.
 
-Floating `@v1` is the intentional, centralised pre-execution trust boundary:
-release policy permits moving it only to a compatible v1.x release. It is not
-post-run immutable provenance. Let `W` be the exact selected workflow object in
-`job.workflow_sha`, the matching exact-attempt `referenced_workflows[].sha`, and
-receipt `producer.action.ref`; let `C` be the checkout output commit, receipt
-`producer.action.commit_sha`, and provenance `action.commit_oid`; and let `T` be
-the independently signed `tags.v1.tag_object_oid`. The v1.5.0 live canary
-observed `W == T`, but the closed contract also admits a future `W == C` shape.
-Consumers require exactly one of those two candidates, always verify that `T`
-peels directly to `C`, and do not pin a v1.5 SHA in this caller or in a consuming
-Skill.
+The ruleset must require all server-side conditions:
 
-## Inputs
+- `codex/github-review-gate`, with expected source GitHub Actions;
+- the branch is up to date;
+- Code Owner review for the protected workflow and CODEOWNERS paths;
+- stale approvals are dismissed after a push;
+- all review conversations are resolved; and
+- non-fast-forward updates to the default branch are blocked; and
+- bypass actors are empty.
 
-These are the direct composite Action inputs. The canonical reusable caller
-does not expose them as `workflow_call` inputs; it derives routing from the
-caller event and the documented repository or organisation variables.
+GitHub's required-check `integration_id: 15368` identifies the entire GitHub
+Actions App, not either workflow alone. Exact-byte verification of both
+canonical workflows, fail-closed workflow inventory, the managed CODEOWNERS
+rules, required Code Owner review, stale-approval dismissal, strict up-to-date
+policy, no bypass actors and canary collision checks form one compound
+control-plane boundary. This is not cryptographic proof of one workflow.
 
-| Input | Default | Description |
+Keep the imported ruleset disabled until a harmless canary has proved the
+actual native CheckRun source and complete wiring. The
+[human-readable guide](https://github.com/Joey-Tools/codex-review-gate/blob/master/docs/install/human.md)
+explains the installation to a person. The
+[agent-executable guide](https://github.com/Joey-Tools/codex-review-gate/blob/master/docs/install/agent.md)
+lets an agent perform that same installation for a person.
+
+## Trigger contract
+
+The canonical verifier has one entry:
+
+- `pull_request` with activity types `opened`, `reopened`, `synchronize` and
+  `ready_for_review`.
+
+The protected-default-branch controller has only these entries:
+
+- `issue_comment` with activity types `created` and `edited`; and
+- `workflow_dispatch` for one explicitly selected pull request.
+
+There is no cron, `repository_dispatch`, `pull_request_target`, writable
+automatic `pull_request_review` job, runtime GitHub App or status writer.
+Review objects and reaction-only completion are discovered by a later
+authoritative verifier reconcile.
+
+An automatic comment job is admitted before runner allocation only when both
+the event sender and comment author are the exact Codex provider:
+`chatgpt-codex-connector[bot]`, GitHub type `Bot`. The Action repeats identity
+and scope checks after the runner starts. An edited Codex comment may invalidate
+an earlier decision, which is why both `created` and `edited` are admitted.
+The verifier fails closed unless the PR is same-repository, open, ready and
+targets the current default branch. A base retarget does not create a current
+verifier because `pull_request.edited` is intentionally absent. For a ready PR,
+convert it to draft and mark it ready again; for an already-draft PR, mark it
+ready. The resulting `ready_for_review` event creates a verifier for the new
+exact head/base/test-merge scope. A native rerun of the old event is not a substitute.
+
+Manual runs use the protected default-branch workflow. A feature-ref dispatch
+is unsupported. The typed `workflow_dispatch` business inputs are:
+
+| Input | Type | Contract |
 | --- | --- | --- |
-| `github-token` | required | Token used to read PR review state, create comments, and write commit statuses. |
-| `pull-request` | empty | Pull request number to gate. Leave empty for event payload routing or open-PR scans. |
-| `head-sha` | empty | Deprecated compatibility input. Event-driven runs load the current PR head from GitHub. |
-| `status-context` | `codex/review-gate` | Commit status context written by the gate. |
-| `state-marker` | `codex-review-gate-state` | Hidden HTML marker used for the sticky state comment. |
-| `marker-comment-marker` | `codex-review-gate-marker` | Hidden HTML marker used for controlled Codex request comments. |
-| `max-wait-seconds` | `7200` | Overall marker wait budget used for retry and liveness orchestration. |
-| `marker-timeout-seconds` | `3600` | Time to wait for an acknowledged marker result before retrying. |
-| `marker-ack-timeout-seconds` | `300` | Initial time to wait for Codex to acknowledge a marker before retrying. |
-| `marker-ack-timeout-max-seconds` | `1800` | Maximum exponential backoff wait for unacknowledged markers. |
-| `completion-signal-buffer-seconds` | `30` | Deprecated v1 interface-compatibility input. Accepted values no longer change gate decisions or request orchestration. |
-| `failed-findings-recovery` | empty | Deprecated v1 interface-compatibility switch. Accepted values no longer change gate decisions or request orchestration. |
-| `failed-findings-recovery-mode` | empty | Deprecated v1 interface-compatibility input. `head` and `fresh` no longer change gate decisions or request orchestration. |
-| `event-mode` | empty | Event mode override: exactly `standard`, `comment-only`, or `full`. Empty falls back to `CODEX_REVIEW_GATE_EVENT_MODE` or `standard`. |
-| `poll-interval-seconds` | `30` | Deprecated compatibility input. Event-driven runs do not poll. |
-| `bootstrap-grace-seconds` | `60` | Deprecated compatibility input. Event-driven runs create controlled markers directly. |
-| `bootstrap-timeout-seconds` | `3600` | Deprecated compatibility input. Bootstrap now closes after the grace period and starts a controlled marker. |
-| `codex-bot-logins` | `chatgpt-codex-connector,chatgpt-codex-connector[bot]` | Comma-separated GitHub logins accepted as Codex bot identities. |
-| `trusted-comment-logins` | `github-actions[bot]` | Comma-separated GitHub logins trusted for gate state and marker comments. |
+| `operation` | choice | `reconcile` or `begin-review`; defaults to `reconcile`. |
+| `pr_number` | number | Required canonical positive PR number. Exactly one PR is processed. |
+| `expected_head_sha` | string | Required full expected PR-head SHA. A stale run never follows a different head. |
+| `request_comment_id` | string | Optional evidence-location hint; never authority. |
+| `request_review` | boolean | Defaults to `true`; controls request posting for `begin-review`. |
 
-## Outputs
+Every dispatch value is untrusted and revalidated against GitHub. Inputs
+cannot provide a verdict, provider identity, required-check result, stale
+override, limits profile, numeric resource limit or permission to skip a full reconcile. A hint may
+allow an early stop only after the runtime proves that no newer relevant
+evidence was skipped. GitHub exposes the typed numeric `pr_number` as a string
+at the Action boundary; the Action still requires its canonical positive
+decimal representation.
 
-On a supported GitHub.com invocation that finalises and uploads a producer
-receipt, the reusable workflow exports these values as job-call outputs and
-the direct composite exposes the same values as step outputs. With a direct
-step ID of `gate`, read them as `steps.gate.outputs.<output-name>`.
+The controller Action step uses the corresponding underscore-named inputs:
+`github_token`, `pr_number`, `expected_head_sha`, `operation`,
+`request_comment_id` and `request_review`. `github_token` and
+`pr_number` are required. A manual run must supply the full
+`expected_head_sha`; the automatic comment path may leave it empty so the
+runtime can bind the authoritative head at startup. Neither path may follow a
+later head change. Both Action steps receive `default` or `expanded` only from
+the protected repository variable `CODEX_REVIEW_GATE_LIMITS_PROFILE`; dispatch
+callers cannot override it.
 
-| Output | Description |
-| --- | --- |
-| `producer-receipt-artifact-id` | GitHub artifact ID for this exact run attempt's receipt. |
-| `producer-receipt-artifact-url` | Web URL ending in `/actions/runs/<run_id>/artifacts/<artifact_id>` for that artifact; this is not the REST artifact `.url`. |
-| `producer-receipt-artifact-digest` | Raw 64-hex SHA-256 digest reported by the exact-pinned receipt upload step. This is an integrity checksum, not a signature or attestation. |
+## Operations
 
-## Repository Setup
+### `begin-review`
 
-After the workflow is merged into the default branch and has run at least once, add `codex/review-gate` to the repository ruleset as a required status check. Use GitHub Actions as the source because the workflow writes the status with `GITHUB_TOKEN`.
+`begin-review` validates the exact PR and expected head, and by default creates
+or safely adopts a fresh exact `@codex review` request with the canonical
+hidden binding. It reads that request back before requesting a full rerun of
+the exact current verifier. `request_review=false` is an advanced best-effort
+option and does not add a dedicated barrier.
 
-For new repositories, start from the language-neutral GitHub template repository
-`Joey-Tools/codex-gated-repo-template` when you want the gate workflow
-preinstalled. The source repository
-`JoeyTeng/codex-review-gate` also ships `templates/codex-gated-repo` and a
-dry-run bootstrap helper for creating or updating the required repository
-ruleset:
+Controller runs for the same PR are serialised with `cancel-in-progress: false`.
+The controller records verifier attempt `A`, requires no competing canonical
+attempt, requests one full rerun, and must observe exact attempt `A+1` plus its
+unique canonical job/CheckRun. An ambiguous POST or invisible attempt remains
+blocking; concurrency is scheduling, not a mutation fence.
+
+For the usual low-cost path, an agent may post exact `@codex review` directly
+while other checks run and invoke GHA only when reconciliation is needed. Use
+`begin-review` when the workflow must coordinate the pending transition and
+request, including a deliberate same-head re-review after an earlier success.
+
+### `reconcile`
+
+`reconcile` re-reads the selected PR and locates exactly one canonical verifier
+whose native CheckRun is on its current feature head and whose run is bound to
+the current test-merge. It then uses the same baseline/rerun/readback
+handshake to establish a strictly newer full verifier attempt. The controller
+never supplies a verdict or rewrites a CheckRun; the read-only verifier alone
+collects evidence and its native job conclusion carries the required result.
+
+The reducer reads qualifying Codex top-level issue comments and pull-request
+review bodies. Inline review threads are deliberately outside the reducer;
+the ruleset's “all conversations resolved” requirement is their authority.
+
+## Evidence semantics
+
+A review generation begins with an exact, unedited `@codex review` request.
+The visible first line is exact and contains no additional visible text. An
+ordinary request author needs `write`, `maintain` or `admin` permission by
+default; protected default-branch configuration may deliberately relax this
+to `any`. A workflow-authored request additionally carries the canonical v2
+hidden marker binding the full head SHA, current base repository/ref/SHA and
+workflow run. Qualifying Codex findings block regardless of request-author
+permission.
+
+Every snapshot also reads the latest GitHub PR timeline
+`BaseRefChangedEvent` or `BaseRefForcePushedEvent`. Positive request and clean
+authority must be strictly newer than that base epoch; equal timestamps are
+ambiguous and stay pending. A provider terminal payload does not identify the
+request or base snapshot that produced it, so a PR with an observed base epoch
+uses a deliberately narrower recovery rule: only a qualifying provider `+1`
+attached directly to a strictly post-epoch, base-bound canonical workflow
+request can supply positive clean authority or supersede an older finding.
+Ordinary direct `@codex review` requests remain supported without a workflow
+marker on PRs that have no base epoch. Findings remain conservative across the
+epoch boundary, and an unlineaged terminal clean stays pending rather than
+being guessed into the new generation.
+
+Terminal clean text and a qualifying provider `+1` have equal clean authority
+only for the first physical generation of a no-base-epoch, single-flight
+lineage. Every provider-triggerable request-shaped comment is a physical
+generation boundary, including duplicate hidden markers, edited or malformed
+requests, and requests that fail authorisation. Boundary status records an
+unknown provider flight; it does not grant positive authority. Under the
+default `write` threshold, an otherwise valid ordinary request requires a
+permission lookup, cached per author within each snapshot, before it can be
+classified as denied. Once denied, it causes no reaction or exact-refetch fan-
+out. Boundaries rejected earlier for invalid shape, author, or binding also
+cause no permission, reaction, or exact-refetch fan-out. Every observed
+`CommentDeletedEvent` is an unbound physical-only boundary because its body is
+not recoverable; an unclosable historical gap containing one requires a
+replacement PR. A same-head canonical request remains a boundary when its base
+tuple is stale; only the exact current
+head/base tuple grants authority. Without a base epoch, provider
+terminal evidence strictly between the first request and its successor may
+close only that first gap. Every later gap, and positive clean authority for any
+generation that has a physical predecessor, requires a qualifying `+1`
+directly on that request. An unbound terminal cannot prove whether it belongs
+to the newer request or is a delayed or duplicate carrier from an older one;
+it therefore cannot pass or supersede findings for the newer generation. With
+a base epoch, even the first gap requires request-bound `+1` evidence.
+
+A same-or-later official `eyes` or provider activity signal no later than a
+successor keeps the predecessor open; equality with the successor is
+timestamp-ordering ambiguity, not proof of completion. Provider terminal
+evidence may close the first gap only when the predecessor reaction inventory
+is complete and no current `eyes` or provider activity follows that terminal
+through the successor. A later clean cannot repair an already ambiguous gap.
+Explicitly commit-bound progress is scoped to that head. Every unbound progress
+carrier remains in the current inventory: nearby request timestamps cannot
+prove its originating flight or head. An edited terminal carrier additionally
+contributes an unbound unknown-activity interval from `created_at` through its
+terminal revision; only that carrier's own terminal endpoint is exempt from
+self-veto when evaluating the same terminal.
+Ordinary request reactions are provider liveness signals only; ordinary `+1`
+cannot head-bind clean by itself. Same-time/later official `eyes`/progress from
+Codex vetoes a candidate clean because review activity has not been proved
+terminal. Reaction-only changes have no automatic workflow event, so a later
+provider event or manual reconcile must observe them.
+When terminal evidence names a reviewed commit, it may use a full or short SHA.
+A short SHA is accepted only when GitHub resolves it unambiguously to the
+current PR head. For a pull-request review, the resolved SHA must also agree
+with the review's native `commit_id`.
+
+Any qualifying current-head non-inline finding blocks immediately. On the
+same head, an older finding can be superseded only by:
+
+1. a strictly newer authorised review generation; and
+2. a later clean result bound to that generation and head under the lineage
+   rule above: an unbound terminal only for the first no-base-epoch generation,
+   otherwise a qualifying request-bound `+1`.
+
+An arbitrary later clean does not erase findings. Ambiguous order or binding
+cannot pass. Historical findings remain visible in diagnostics.
+
+## Stable clean and limits
+
+A finding can decide failure from the first complete observation. Only a clean
+candidate must survive two independent, fully paginated GitHub snapshots five
+seconds apart. Each snapshot covers the fixed PR lifecycle, base and head; the
+latest filtered base-change/force-push timeline epoch;
+request IDs, revisions, authors and reactions; qualifying Codex comments and
+reviews with their identities, times, actor/App identity and body digests;
+reviewed-SHA resolution and native review `commit_id`; and pagination and
+exact-refetch completeness.
+
+The head and decision-relevant fingerprint must match across both reads. A
+same-head request, edit, reaction or other relevant evidence change restarts
+the stability window. A head/lifecycle mismatch makes the run stale. API,
+pagination and cap failures are incomplete observations, never evidence of
+stability. If no stable clean pair is available within the reconcile budget,
+the gate stays pending for a later provider event or manual reconcile.
+
+The reviewed profiles are fixed:
+
+| Profile | Pages | Raw objects | API attempts | Snapshot | Request timeout | Reconcile budget |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `default` | 20 | 2,000 | 128 | 32 MiB | 10 s | 60 s |
+| `expanded` | 100 | 10,000 | 512 | 64 MiB | 20 s | 300 s |
+| hard ceiling | 1,000 | 20,000 | 2,048 | 64 MiB | 30 s | 720 s |
+
+Page size is 100, one response is capped at 8 MiB, the inter-read delay is five
+seconds and the job timeout is 14 minutes. A repository may persistently select
+`expanded`. Temporary per-dispatch numeric overrides are not part of v2.0.
+
+## Public result ABI
+
+The Action exposes exactly four public outputs:
+
+| Output | Values | Meaning |
+| --- | --- | --- |
+| `execution_health` | `healthy`, `unhealthy` | Whether the evaluator completed trustworthily. |
+| `gate_outcome` | `success`, `failure`, `pending`, `not_applicable`, `unknown` | The review-gate decision. |
+| `recovery_code` | closed set below | The safe next-action category. |
+| `retry_safe` | boolean | Whether an immediate retry with identical inputs is a valid recovery action. |
+
+The closed `recovery_code` set is:
+
+```text
+none
+wait_provider
+reconcile
+fix_findings
+request_clean_generation
+retry_reconcile
+wait_then_reconcile
+use_expanded_limits
+raise_protected_limit
+refresh_head
+repair_permissions
+retry_begin
+unsupported_target
+create_verifier_run
+```
+
+Findings normally produce `healthy/failure`, not an execution error.
+`unhealthy/success` is invalid. In the verifier workflow, only a proved stable
+`healthy/success` may conclude successfully; findings, pending evidence,
+unsupported scope, cancellation, timeout and every unhealthy result remain
+blocking. The required verifier CheckRun belongs to the exact current PR
+feature-head SHA. Its `pull_request` run executes on `refs/pull/N/merge`, and
+the Action's environment/event/fresh-read checks bind success to the unchanged
+head, base and test-merge. The controller's CheckRun is attached to the default-branch commit
+and is never the required PR signal. Direct status projection and
+`status_projection` are deleted. Finding counts remain summary-only, not public
+Action outputs.
+
+`healthy/pending` cannot safely authorise success even when the evaluator
+completed trustworthily; it is not a weak success. Every result, including
+pending and not-applicable results, must follow its `recovery_code`. Only
+`wait_provider` is a pure wait without another repair or reconcile action.
+
+When they can be derived without another evidence query, the sticky diagnostic
+and Actions summary report:
+
+- `findings_unresolved`;
+- `findings_resolved`;
+- `findings_historical`;
+- `findings_indeterminate`.
+
+Incomplete API reads, pagination or cap hits make affected counts `unknown`,
+never `0`. These counts cover only normalised non-inline reducer findings and
+do not replace conversation-resolution enforcement.
+
+See [DESIGN.md](DESIGN.md) for the authority and consistency model and
+[COOKBOOK.md](COOKBOOK.md) for recovery procedures.
+
+## Exact-head merge closure
+
+A success is an observation, not a permanent lease. Immediately before merge,
+an agent must dispatch controller `reconcile` with the exact current head,
+observe the strictly newer verifier attempt and its unique canonical CheckRun,
+and require all of the following at one final read:
+
+- Action result `healthy/success`;
+- `codex/github-review-gate` success from the canonical verifier on the exact
+  current feature-head SHA, from the run bound to the same current test-merge;
+- the PR head, base and test-merge SHA remain unchanged;
+- the branch is up to date;
+- all review conversations are resolved; and
+- the ruleset allows the merge.
+
+If any item changes, stop and reconcile the new current state. Otherwise merge
+immediately with this exact-head compare-and-swap:
 
 ```bash
-node scripts/bootstrap-codex-review-gate.mjs --repo OWNER/REPO
-node scripts/bootstrap-codex-review-gate.mjs --repo OWNER/REPO --apply
+gh pr merge "$PR_NUMBER" \
+  --repo "github.com/$REPO" \
+  --match-head-commit "$HEAD_SHA"
 ```
 
-Recommended rollout:
+Direct human UI merge outside this closure is unsupported.
 
-1. Merge the workflow into the repository default branch.
-2. Open a follow-up test PR.
-3. Confirm the workflow creates a current-head marker comment on `opened` and `synchronize`.
-4. Confirm the gate can pass or fail with the current runner implementation.
-5. Add `codex/review-gate` to the ruleset required status checks.
+## Supported boundary
 
-Do not require `codex/review-gate` before the workflow exists on the protected default branch. The first PR that introduces the workflow cannot fully self-test the `pull_request_target` path because GitHub Actions reads that workflow from the repository default branch.
+Stable v2.0 supports GitHub.com public and private repositories; ordinary
+same-repository branches with an open, non-draft PR targeting the default
+branch; GitHub-hosted Linux runners (`ubuntu-slim`, with `ubuntu-latest` as the
+adopted fallback); and ordinary merge, squash and rebase methods.
 
-## Invocation Provenance
+It fails closed for GHES, forks, merge queues, non-default bases, drafts,
+bot-owned PRs, self-hosted/Windows/macOS runners, and new operations on closed
+or merged PRs.
 
-After the rollout gate above, the canonical GitHub.com caller uses
-`JoeyTeng/codex-review-gate-action/.github/workflows/codex-review-gate.yml@v1`.
-This floating major alias is the intentional centralised pre-execution trust
-boundary: moving it upgrades all callers to a compatible v1.x release. It is
-not post-run immutable provenance. In the current live shape, post-run
-admission verifies the exact signed `v1` tag-object OID selected in
-`job.workflow_sha` and its peel to the admitted action commit. The closed
-resolution contract below also admits a future exact-action-commit shape;
-neither the caller nor a consuming Skill pins the v1.5 SHA.
+The runtime is API-only. It does not check out or execute consumer/PR code,
+upload artifacts, retain raw API payloads, or introduce a runtime GitHub App.
+Diagnostics are best effort and never authority.
 
-Inside the called job, `github.workflow_ref` and `github.workflow_sha` still
-identify the caller workflow. The called implementation is identified by the
-GitHub.com-only `job.workflow_repository`, `job.workflow_file_path`,
-`job.workflow_ref`, and `job.workflow_sha` fields. The SHA field identifies the
-selected workflow object. The v1.5.0 canary observed the annotated `v1` tag
-object; the closed contract also admits the peeled action commit when GitHub
-reports that exact object instead. The reusable workflow checks out the exact
-selected object with a full-SHA-pinned `actions/checkout`,
-`repository: ${{ job.workflow_repository }}`, and
-`ref: ${{ job.workflow_sha }}`. The `checkout` step's official `commit` output
-is the peeled action commit and reaches the local composite only as
-`CODEX_REVIEW_GATE_CHECKED_OUT_ACTION_COMMIT_SHA: ${{ steps.checkout.outputs.commit }}`,
-never a `workflow_call` or caller input. A bare checkout would select the caller
-repository, so the trusted workflow never performs one and never checks out or
-executes pull-request code.
+## v1 boundary
 
-The direct composite form remains compatible when it uses
-`JoeyTeng/codex-review-gate-action@<exact-lower-case-40-sha>`. It is the
-required fallback on GitHub Enterprise Server, where the reusable-workflow
-`job.workflow_*` identity is unavailable. A floating direct composite
-reference is non-authoritative, and a failed reusable validation must not be
-opportunistically downgraded to direct mode. The receipt-based positive
-provenance path remains GitHub.com-only; GHES fallback preserves direct gate
-operation, not this receipt-backed admission claim.
+Existing v1 consumers remain valid until deliberately migrated. v2 does not
+rewrite, republish or fall back to v1. A consumer may remove v1 and install v2
+in one PR, then validate the installed `@v2` gate in a separate harmless PR
+that is closed without merging.
 
-A Commit Status record's target head, `context`, `creator`, and `target_url`
-are consistency evidence only. They are not invocation provenance: a workflow
-with `statuses: write` can reproduce the status context and target URL, and
-may use the same generic `github-actions[bot]` creator.
+## Feedback
 
-Commit Status is per repository SHA and context, not per pull request. Open PRs
-that share a head SHA share the same status and branch-protection signal. The
-status therefore cannot prove PR isolation; the selected receipt `statuses[]`
-entry's PR number and independently reduced provider evidence must both match
-the selected current PR.
-
-On GitHub.com, both supported forms emit producer receipt v1 under
-[`producer-receipt.schema.json`](producer-receipt.schema.json). For the
-canonical reusable tuple—exact action repository, workflow file, `refs/tags/v1`
-job ref, and lower-case 40-hex `job.workflow_sha`—the producer maps that exact
-selected workflow object OID to `producer.action.ref`. It independently maps the
-full-SHA-pinned checkout step's official `commit` output to
-`producer.action.commit_sha` and sets `immutable: true`; the checkout commit
-must be the admitted action commit. The called workflow controls that
-environment binding and exposes no caller input for it. Native action context
-has structural priority: if either `github.action_repository` or
-`github.action_ref` is present, the producer records that direct context and
-ignores the reusable checkout-commit environment. Such a direct identity is
-immutable only when its action ref is an exact lower-case 40-SHA. The reusable
-W/C mapping is considered only when both native fields are absent and the job
-tuple is exact canonical. A near-canonical tuple never upgrades identity or
-supplies a fallback; with no native context it produces unusable
-`immutable: false` action identity.
-
-Receipt mode uses the attempt-specific
-`/actions/runs/<run_id>/attempts/<attempt>` target URL. Each receipt-enabled
-`setCommitStatusIfNeeded` forces a POST from that attempt and records the REST
-response ID, node ID, exact echoed fields, creator, full head, and PR. A scan
-receipt may contain several ordered statuses. Only `completed` or `failed`
-receipts are eligible for one action-level, `overwrite: false` upload attempt
-per finalized run attempt through exact-pinned
-`actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
-(`v4.6.2`). The producer does not claim exactly-once artifact creation;
-consumer inventory must prove exactly one. The attempt-specific path is the
-Workflow Run request endpoint and status target. Workflow Run response
-`url`/`html_url` fields remain base-run resource URLs and are not required to
-equal that attempt URL.
-
-Any consuming review or readiness Skill must preserve four separate SHA
-domains: the caller workflow definition (`github.workflow_sha`), the exact API
-run-attempt head (`head_sha`), the called workflow's selected object identity
-(`job.workflow_sha`), and the current pull-request/status head. None may be
-substituted for another. Specifically, do not require the exact run-attempt
-`head_sha` or Artifact API `workflow_run.head_sha` to equal the selected
-receipt status head; do not require that run-attempt head to equal
-`GITHUB_WORKFLOW_SHA`; and do not require `GITHUB_WORKFLOW_SHA` to equal
-`job.workflow_sha`. The caller workflow SHA identifies the caller workflow
-revision in a called workflow. Their authoritative machine-readable contract
-is `producer_receipt_boundary` in
-[`decision-table.json`](decision-table.json). The Skill must:
-
-1. Query the Artifact API for the exact run, attempt-specific receipt name,
-   and require `total_count == 1`. When outputs are available, match the REST
-   ID to the output ID; construct
-   `<server>/<repository>/actions/runs/<run_id>/artifacts/<artifact_id>` and
-   match that web URL to the output instead of comparing REST artifact `.url`.
-   Require REST `.digest` to equal `sha256:` plus the raw 64-hex output digest,
-   then verify the download digest, exactly one expected file, and the v1
-   schema.
-2. The receipt schema permits finalised `completed` and `failed` results, but
-   a positive review or readiness decision must require
-   `execution.result == completed`; a `failed` receipt remains audit evidence
-   only. Also require the current repository, exact run/attempt/target, caller
-   workflow fields, and one explicitly selected structural mode. Reusable mode
-   requires the exact canonical job tuple, action repository,
-   `producer.action.ref == job.workflow_sha`, the independently bound checkout
-   commit in `producer.action.commit_sha`, and `immutable: true`; direct mode
-   requires the expected action repository and exact lower-case 40-SHA with
-   action ref and commit SHA equal and `immutable: true`.
-3. Fetch the attempt through
-   `GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt}`; do not
-   require its response `url` or `html_url` to be attempt-specific. Require the
-   Artifact API record's `workflow_run.id` and `workflow_run.head_sha` to equal
-   that response's `id` and `head_sha`. In reusable mode, require the optional,
-   nullable `referenced_workflows` array to be present and contain exactly one
-   entry matching the canonical repository/workflow path and v1 call. Let its
-   required `sha`, `job.workflow_sha`, and receipt `producer.action.ref` be
-   `W`; its `ref` must be present and equal `refs/tags/v1`. Require `W` to equal
-   exactly one declared value in
-   `runtime_closure.called_workflow.workflow_sha_resolution.candidates`, with
-   each candidate value equal to its declared provenance field. The only
-   admitted branches are current-live `W == T`, where `T ==
-   tags.v1.tag_object_oid`, and future `W == C`, where `C ==
-   action.commit_oid`. In both branches require the independently signed `T` to
-   peel directly to `C`, and require `tags.v1.peeled_commit_oid ==
-   action.commit_oid == producer.action.commit_sha`. Other object types, nested
-   tag peels, and zero or multiple candidate matches fail closed. This is
-   run-attempt-level corroboration only: GitHub exposes no entry-to-job or
-   entry-to-receipt mapping and no cryptographic binding. Missing, null,
-   malformed, or non-unique evidence fails closed.
-4. In reusable mode, enumerate release candidates through the fully paginated GitHub Releases
-   API and require exactly one published, immutable, non-draft,
-   non-prerelease `v1.x.y` release whose trusted-signer tag peels to `C`, whose
-   single provenance asset has the compatible closed schema/majors and
-   `action.commit_oid == C`, and whose workflow-SHA candidate set contains `W`
-   exactly once. Zero or multiple matching releases or assets fail closed.
-   Require the independently signed annotated `v1` tag object `T` to peel
-   directly to the same `C`, even in the future `W == C` branch. Verify both
-   tags with a trusted primary signer fingerprint, plus the manifest's action
-   root tree and critical-file bindings, receipt schema v1, and a compatible
-   policy with `policy_major == 1`. Never infer a historical run from the
-   current `v1` target. Canonical reusable callers accept compatible v1.x Action-only
-   upgrades without a caller or Skill edit; direct callers must update their
-   exact pin. A protocol or policy major change requires a coordinated Skill
-   update.
-5. In the current-PR/status head domain, REST-list statuses with the request
-   `ref` equal to the exact current PR head; the selected status must come from
-   that exact-head response. Select the case-insensitive logical context's
-   latest record, then require the exact configured context spelling
-   (`codex/review-gate` by default) and creator
-   `github-actions[bot]` with type `Bot`. Select the unique matching receipt
-   `statuses[]` member for the current PR—not necessarily the last member—and
-   require its `head_sha` to equal that exact current PR head. Match its PR
-   number, `id`, `node_id`, context, state, target URL, and `creator` to the
-   selected REST record. A positive decision requires exact
-   `status.state == success` for the selected REST record and receipt member;
-   that selected creator must independently be exact `github-actions[bot]`
-   with type `Bot`. Missing or non-unique membership fails closed.
-6. Re-read the node as GraphQL `StatusContext` and require exact context, state,
-   and target URL across the selected receipt status, REST record, and GraphQL
-   node. Require `StatusContext.commit.oid` to equal the exact current PR head
-   and therefore the selected receipt status `head_sha`; retain the
-   receipt/run/current-state called SHA and workflow/job bindings. Require its
-   creator independently to be exactly `github-actions[bot]` with type `Bot`;
-   creator agreement alone is insufficient. A `StatusContext` does not supply
-   PR isolation. The caller workflow, run-attempt, called implementation, and
-   current PR/status SHA domains may legitimately differ; never invent an
-   equality between them.
-7. Independently reload and reduce provider evidence for the same PR named by
-   the selected receipt member. The receipt does not prove clean evidence or
-   merge readiness.
-8. Immediately before readiness consumption, final-REST-list the exact-head
-   statuses and require the case-insensitive logical latest to remain the same
-   REST ID/node ID with the exact context. Stably re-read PR head/lifecycle,
-   exact run-attempt metadata, and the run-level artifact inventory queried
-   with the attempt-specific name, which must still contain exactly one
-   artifact; every binding and the
-   independently reduced provider snapshot must remain stable. Changes receive
-   bounded retry and then fail closed.
-
-The trusted-signer and release checks above are point-in-time evidence. They do
-not guarantee that a key, signature, tag, or release was never revoked or will
-remain unrevoked. A consumer that needs revocation freshness or historical
-revocation guarantees must define and enforce that separate policy.
-
-Status POST and artifact upload are not atomic, and artifacts can expire or be
-deleted. Upload failure, Artifact API absence or multiplicity, unfinished
-execution, no matching status, or any invalid receipt fails closed even if a
-status exists. Receipt v1 is causal producer evidence only and never replaces
-independent provider reduction. Its digest is integrity evidence, not a
-cryptographic signature, OIDC attestation, or content-addressed storage
-guarantee. Exact creator checks remain spoofable with `statuses: write`; only
-the validated receipt/run chain adds causal consistency. These point-in-time
-re-reads do not eliminate TOCTOU or make a per-SHA/context status prove a
-PR-specific fact. See
-[DESIGN.md](DESIGN.md#invocation-provenance-boundary) for the full contract.
-
-## Operational Notes
-
-- The workflow does not execute PR code.
-- The workflow should have both `issues: write` and `pull-requests: write` so it can create PR conversation comments.
-- For the clearest request flow, repositories may disable Codex automatic
-  review-on-push to reduce duplicate reviews. Automatic and controlled-marker
-  results are evaluated by the same provider-evidence rules; the marker does
-  not authorise either result.
-- The runner fully paginates REST comments, reviews, inline comments, and GraphQL review threads before it can pass.
-- Official REST evidence must come from an accepted Bot identity. Top-level issue comments also require the official `chatgpt-codex-connector` GitHub App by default.
-- REST evidence IDs must be positive safe integers; GraphQL opaque and `fullDatabaseId` fields must use their canonical string forms. Duplicate provider, review, inline-comment, or thread identities fail closed, including on resolved threads.
-- Reviews bind through the native full `PullRequestReview.commit_id`; any
-  reviewed-commit hash present in the review body must agree with it. Inline
-  comments bind through their parent review and `original_commit_id`, not
-  GitHub's mutable relocated `commit_id`.
-- A reconciled inline comment lets its `COMMENTED` parent use the closed official inline-review wrapper without blob links in the wrapper body. The wrapper's reviewed-commit marker must still match the parent's full `commit_id`; unknown parent bodies fail closed.
-- Top-level clean comments must contain exactly one reviewed-commit marker. A
-  short marker must resolve uniquely through the repository commit API to the
-  full current-head SHA.
-- The closed clean structure requires the exact issue-comment lead and then permits either no tagline or one nonempty, trimmed, same-line presentation tagline separated by exactly one ASCII space and bounded to 160 UTF-16 code units. A tagline must be one known stem—`Nice work`, `Chef's kiss`, `What shall we delve into next`, `Already looking forward to the next diff`, `Keep them coming`, `Swish`, `Another round soon, please`, `Breezy`, `Can't wait for the next one`, `More of your lovely PRs please`, `Bravo`, `Keep it up`, `Delightful`, `Hooray`, or `You're on a roll`—plus exactly one final `.`, `!`, or `?`; exact `:rocket:`, `:tada:`, or `:+1:`; or one to eight exact RGI emoji graphemes, adjacent or separated by one ASCII space. Every unknown prose tagline fails closed, whether positive, actionable, or contradictory. The tagline is presentation only and never supplies clean or finding evidence. The comment still requires exactly one 10- or 40-hex reviewed-commit line and either no suffix or the exact official disclosure. An `APPROVED` review must be empty, exact `Looks good.`, or have a unique exact final `No findings.` optionally after one summary of at most 240 characters. That summary must begin with exact `Coverage:` or `Review coverage:` and continue with a comma/`and`-separated list of backtick-wrapped identifier or path tokens matching `[A-Za-z0-9_./:@+-]+`, with only an optional final period; verb-led and other prose are rejected. A whole normalized target equal to `P0`–`P3`, `S0`–`S3`, `critical`, `high`, `medium`, `low`, `finding`, `findings`, `blocker`, `blocking`, `found`, `detected`, `data-loss`, or `auth-bypass` is rejected, but those words inside a real path or identifier are not blanket-rejected. Finding signals always win.
-- Review-body and unthreaded top-level findings must use exact `github.com` links for the gated owner and repository with a full commit SHA. Unknown or conflicting current formats fail closed.
-- An exact joined thread containing a current-head or ancestor finding stops
-  blocking only when authoritative `isResolved` is exactly `true`;
-  `isOutdated` and a later clean result do not close it. An older threadless
-  same-head or ancestor finding is superseded only by the strictly later
-  selected current-head clean. A proved non-ancestor finding is audit-only and
-  is removed before the evidence is reduced again. Issue comments require
-  canonical `created_at` and `updated_at`, with `updated_at >= created_at` and
-  `updated_at` as revision time. Two issue comments in the same revision second
-  are always ambiguous: `created_at == updated_at` cannot prove no same-second
-  edit, so IDs never break the tie. Same-time pull-request reviews retain the
-  canonical ID tie-break only within the review channel; cross-channel ties
-  remain ambiguous.
-- A clean bound to a proven ancestor is stale audit evidence. A clean bound to
-  a proved non-ancestor is audit-only and removed before re-reduction; only an
-  unknown relationship after bounded retry writes stable
-  `ancestry-unverified` error.
-- Ancestor checks validate the documented REST commit-comparison fields and their closed relationship/count matrix against the exact 40-hex `base...head` request. The unpaginated `commits` list must have `min(ahead_by, 250)` unique full-SHA entries, exclude the base and merge-base commits, and bind its nonempty final entry to the requested head. Checks ignore undocumented `head_commit`, perform no extra head-commit GET, and fail closed on any schema or relationship contradiction. An unknown relationship receives bounded retry and then a stable `error` described as `ancestry-unverified`.
-- Sticky state, controlled markers, baselines, deadlines, recovery mode, and
-  status history support request orchestration, retry, liveness, audit, and
-  idempotency only. They neither authorise nor reject provider evidence. A
-  rerun reconstructs current evidence and can reassert `success` over a later
-  stale `pending` or `error` status, including from a valid clean artifact
-  created after an earlier marker deadline.
-- The optional status-deduplication GET is independent best-effort work: 100 statuses per page, at most 10 pages or 1,000 items, 1 MiB per response, 4 MiB total, and 16 fetch attempts. It selects the first (newest) same-context record before checking producer identity. Failure or exhaustion becomes `readFailed` and does not taint review evidence. Receipt mode always POSTs the current attempt's computed status; outside receipt mode, `readFailed` also causes a direct POST.
-- A review-evidence budget failure aborts active evidence requests and becomes
-  `error` after bounded retry. When loads expose both an evidence issue and a
-  confirmed blocking finding, `failure` wins and its summary mentions the
-  evidence issue; without a confirmed finding, the evidence issue writes
-  `error`.
-- Retryable REST and GraphQL responses honour valid `Retry-After` delays up to 10 seconds. Longer delays stop immediately, while missing or malformed values use bounded fallback retries; the header never expands the existing retry-safe method/status set.
-- Older short-SHA clean results are resolved lazily only when an older unthreaded finding's supersession depends on them.
-- Transient acquisition and reconciliation faults, including evidence-budget
-  exhaustion, use bounded retry and then write stable `error`. Deterministic
-  malformed, provider schema, identity, commit-binding, or ancestry conflicts
-  also write `error` and exit non-zero when no confirmed finding controls the
-  mixed result.
-- Default retry and liveness windows remain exactly 300 seconds for initial
-  acknowledgement, 1,800 seconds for maximum acknowledgement backoff, 3,600
-  seconds for an acknowledged result, and 7,200 seconds overall. `eyes` only
-  changes `waiting_ack` to `waiting_result`; it does not reset or extend any
-  deadline. The recommended schedule checks retry deadlines every 2 hours.
-  These windows do not limit provider-artifact validity.
-
-## Feedback and Reporting
-
-Use [GitHub issues](https://github.com/JoeyTeng/codex-review-gate-action/issues) to report action bugs, bad gate behaviour, documentation gaps, or Marketplace listing issues. If a pull request receives problematic AI-generated review content, use GitHub's normal reporting and feedback tools for that specific comment or review, and include a link in an issue when it is relevant to this action's gate behaviour.
-
-## Source and Development
-
-This repository is the Marketplace release package. Development, CI, and self-gating workflows are maintained in [JoeyTeng/codex-review-gate](https://github.com/JoeyTeng/codex-review-gate).
+Report public package issues at
+[`JoeyTeng/codex-review-gate-action`](https://github.com/JoeyTeng/codex-review-gate-action/issues).

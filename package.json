@@ -1,10 +1,10 @@
 {
   "name": "codex-review-gate-action",
-  "version": "1.5.1",
+  "version": "2.0.0-rc.1",
   "description": "Deterministic GitHub status gate for Codex pull request reviews.",
   "type": "module",
   "scripts": {
-    "check": "node --check src/core.mjs && node --check src/evidence-budget.mjs && node --check src/gate.mjs"
+    "check": "node --check src/core.mjs && node --check src/evidence-budget.mjs && node --check src/gate.mjs && node --check src/v2/gate-runtime.mjs"
   },
   "repository": {
     "type": "git",
