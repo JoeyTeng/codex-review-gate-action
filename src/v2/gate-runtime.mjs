@@ -744,6 +744,33 @@ function reportOutputValues(report) {
   };
 }
 
+function redactV2GateCliText(value, environment) {
+  let text = String(value ?? "");
+  const tokens = new Set([
+    String(environment?.GITHUB_TOKEN ?? "").trim(),
+    String(environment?.INPUT_GITHUB_TOKEN ?? "").trim(),
+  ]);
+  for (const token of tokens) {
+    if (token) text = text.replaceAll(token, "[REDACTED]");
+  }
+  return text.replace(/\bBearer\s+\S+/giu, "Bearer [REDACTED]");
+}
+
+function writeV2GateCliReport(report, environment) {
+  const reason = redactV2GateCliText(
+    oneLine(report.reason, "No reason was reported"),
+    environment,
+  ).slice(0, 1_000);
+  console.error(`[codex-review-gate] ${JSON.stringify({
+    execution_health: report.executionHealth,
+    gate_outcome: report.gateOutcome,
+    recovery_code: report.recoveryCode,
+    retry_safe: report.retrySafe,
+    findings: report.counts,
+    reason,
+  })}`);
+}
+
 function recoveryInstruction(
   code,
   prNumber,
@@ -1398,7 +1425,6 @@ export async function runV2GateCli({
           !stale,
       });
     } catch (reportError) {
-      console.error(`failed to finalize v2 gate report: ${reportError.message}`);
       const preserveFindingFailure =
         error?.gateOutcome === "failure" &&
         error?.recoveryCode === "fix_findings" &&
@@ -1421,16 +1447,9 @@ export async function runV2GateCli({
           outputPath: environment.GITHUB_OUTPUT || "",
           summaryPath: environment.GITHUB_STEP_SUMMARY || "",
         }, report, context, { allowSummaryAfterOutputFailure: true });
-      } catch (finalReportError) {
-        console.error(
-          `failed to persist final unhealthy v2 gate report: ${finalReportError.message}`,
-        );
+      } catch {
+        // The direct CLI reporter emits the final structured diagnostic.
       }
-    }
-    if (report.executionHealth === "unhealthy") {
-      console.error(error?.stack || error?.message || String(error));
-    } else {
-      console.warn(error?.message || String(error));
     }
     return {
       report,
@@ -4029,10 +4048,13 @@ function hasV2DirectProviderReactionAfterRequest(request, requestReactions) {
 
 function isV2TerminalCleanReceiptForDefaultAnyRequest(artifact, request, headSha) {
   const resolvedHeadSha = String(artifact?.resolvedHeadSha || "").toLowerCase();
+  const acceptedCarrier = artifact?.source === "issue-comment"
+    ? artifact?.edited !== true
+    : artifact?.source === "pull-request-review" &&
+      artifact?.inlineParentReceipt === true;
   if (
     artifact?.kind !== "clean" ||
-    artifact?.source !== "issue-comment" ||
-    artifact?.edited === true ||
+    !acceptedCarrier ||
     artifact?.orderingError ||
     artifact?.resolutionError ||
     !FULL_SHA.test(resolvedHeadSha) ||
@@ -5085,6 +5107,12 @@ async function collectV2ProviderEvidence(
       continue;
     }
     if (codexInlineParentReviewBodyHasClosedGrammar(review, { allowShortCommitRefs: true })) {
+      // This closed parent wrapper carries no non-inline finding payload. Its
+      // children remain entirely outside this REST-only reducer: the required
+      // ruleset owns whether every conversation is resolved. Treating the
+      // exact, submitted parent as a narrow terminal clean receipt preserves
+      // that split without querying or interpreting review threads here.
+      artifacts.push(v2InlineParentReviewCleanArtifact(review));
       continue;
     }
     const artifact = parseCodexReviewArtifact(review, {
@@ -5176,6 +5204,28 @@ async function collectV2ProviderEvidence(
     }
   }
   return { artifacts, errors, commitResolutions };
+}
+
+function v2InlineParentReviewCleanArtifact(review) {
+  const createdAt = String(review.submitted_at || review.created_at || "");
+  const headSha = String(review.commit_id || "").toLowerCase();
+  return {
+    source: "pull-request-review",
+    id: String(review.id),
+    kind: "clean",
+    // This marker is intentionally narrower than an ordinary APPROVED review:
+    // only the exact closed Codex inline-parent grammar may promote the one
+    // default-any, single-flight request through terminal-receipt authority.
+    inlineParentReceipt: true,
+    headSha,
+    nativeCommitId: headSha,
+    createdAt,
+    carrierCreatedAt: createdAt,
+    carrierUpdatedAt: createdAt,
+    revisionAt: createdAt,
+    edited: false,
+    url: review.html_url,
+  };
 }
 
 function approvedReviewCommitReferences(body) {
@@ -7189,5 +7239,6 @@ if (
   pathToFileURL(process.argv[1]).href === import.meta.url
 ) {
   const result = await runV2GateCli();
+  writeV2GateCliReport(result.report, process.env);
   process.exitCode = result.exitCode;
 }
