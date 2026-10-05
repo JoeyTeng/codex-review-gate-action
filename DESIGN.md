@@ -64,9 +64,11 @@ Codex issue_comment created               protected workflow_dispatch
                                 +---- summary / best-effort sticky
 ```
 
-An optional protected `workflow_run` ingress also reaches the same controller
-after a canonical verifier completes with failure. It is request-only and does
-not immediately rerun the verifier.
+The protected `workflow_run` completion ingress also reaches the same
+controller for completed canonical verifier runs. Only the existing opted-in
+first-attempt failure with one PR association remains `begin-review`; other
+eligible completions use `report-completion` for diagnostics and do not rerun
+the verifier.
 
 ### Consumer workflows
 
@@ -161,8 +163,9 @@ canonical permission before a floating `v2` release requires this read;
 missing authority fails closed.
 
 The controller admits `issue_comment` `created`, default-branch
-`workflow_dispatch`, and the opt-in `workflow_run` `completed` path for a failed
-canonical verifier. Comment admission checks both event sender and comment
+`workflow_dispatch`, and `workflow_run` `completed` for the canonical verifier's
+`pull_request` event. The completion path accepts an empty or unique PR
+association; multiple associations are rejected. Comment admission checks both event sender and comment
 author against exact login `chatgpt-codex-connector[bot]` and exact type `Bot`
 before runner allocation. The Action revalidates the admitted event because
 the two checks protect different boundaries. An edited Codex comment requires
@@ -214,7 +217,9 @@ remainder of the run.
 
 The controller Action uses underscore-named inputs `github_token`, `pr_number`,
 `expected_head_sha`, `operation`, `request_comment_id` and `request_review`.
-`operation` is closed to `reconcile|begin-review`, and `request_review` is boolean.
+Manual `operation` choices remain `reconcile|begin-review`; the protected
+`workflow_run` ingress alone may select internal `report-completion`, and
+`request_review` remains boolean.
 Verdicts, identities, status context, stale overrides, numeric limits and
 skip-reconcile controls are not inputs.
 
@@ -297,6 +302,42 @@ prevents the verifier from running, there is no `workflow_run` failure to
 consume, so recovery is manual. The feature is off unless explicitly enabled
 by the exact variable value above.
 
+### `report-completion`
+
+Every eligible canonical verifier completion other than the preserved
+auto-request branch selects `report-completion`, including successful reruns,
+failed/cancelled completions and runs when `CODEX_REVIEW_GATE_AUTO_REQUEST` is
+unset. The operation is `workflow_run`-only and has no dispatch option. It
+revalidates the exact canonical workflow/run/attempt, the selected PR's current
+head/base/test-merge scope, the latest exact-head verifier run and its current
+CheckRun before writing a best-effort diagnostic snapshot. It performs no
+provider-evidence scan, reconciliation, verifier rerun or review request. The
+extra controller run consumes billable runner minutes.
+
+When GitHub supplies no PR association, the workflow passes `pr_number: 0` as
+an internal sentinel. Runtime accepts it only for an empty association list,
+parses the PR and test-merge SHA from the exact canonical dynamic `display_title`,
+and binds that result to the current PR and exact run scope. A multi-PR
+association is rejected; the old automatic `begin-review` path still requires
+the unique association and does not use this fallback.
+
+The diagnostic is an editable output projection, not review evidence or gate
+authority. A stale run/scope snapshot is ignored; the current successful
+native `codex/github-review-gate` CheckRun remains the only required signal.
+For an empty-association event, the unchanged controller concurrency
+expression has an empty repository-scoped suffix rather than the usual PR
+number. Runtime performs a final point-in-time recheck before the write, but
+this fallback does not guarantee per-PR serialization with every other
+controller run. The snapshot cannot authorise a merge.
+
+Publish the compatible Action runtime before installing a controller workflow
+that calls `report-completion`; do not expose the operation to v2.1.6 or older
+runtime code. Keep the Action release and canonical workflow rollout aligned.
+The source repository is the self-hosting exception because its controller
+workflow changes in the same source PR. Until the Action release is available,
+the optional diagnostic controller run may fail on the unknown operation; the
+required verifier CheckRun and existing manual operations are unchanged.
+
 ### `reconcile`
 
 Manual reconcile requires the caller's full `expected_head_sha`; the automatic
@@ -324,12 +365,19 @@ not retained.
 
 The best-effort sticky diagnostic is an output projection only. Its v2 marker
 is distinct from request markers and contains no `@codex review`. Only a
-strict canonical comment from `github-actions[bot]` qualifies. Immediately
-before writing, runtime reads the complete issue-comment inventory. It posts one
-canonical diagnostic only when none exists; it never patches an existing
-canonical diagnostic or posts a replacement while one exists. Multiple
-canonical diagnostics are preserved untouched and diagnosed with a bounded
-warning.
+strict canonical comment from `github-actions[bot]` with the matching PR
+binding qualifies. The `report-completion` operation reads the complete
+issue-comment inventory before writing: it patches the one strictly bound
+canonical diagnostic when exactly one exists, posts one when none exists, and
+skips the write with a bounded warning when multiple canonical diagnostics
+exist. Only `report-completion` patches an existing diagnostic; another
+operation may still create one when absent. The updated controller diagnostic
+format omits visible unknown counts and thread detail while its hidden payload
+preserves typed `unknown` fields; it labels itself as a snapshot rather than
+the current gate result and includes the PR/head, run/attempt/link/time, and
+authoritative verifier/Checks summary. Older canonical payloads, including the
+v2.1.6 shape without `reviewThreads`, remain readable. An edited presentation
+never becomes review evidence.
 
 Write suppression is broader than the evidence exemption. Only an exact raw
 canonical body with the required hidden-field types, official Actions
@@ -672,6 +720,44 @@ to decide the fixed PR/head scope. It includes:
 - reviewed-commit resolution and native review `commit_id`; and
 - collection completeness and exact-object refetch results.
 
+### Bounded acquisition batching
+
+Each carrier pass still acquires complete comments and reviews before local
+selection. It reads the latest filtered base-event connection alongside the
+first comment-history GraphQL page, rather than through a separate request.
+Subsequent history pages retain independent deletion/comment cursors; they do
+not repeatedly acquire the latest base event. Both history and epoch validators
+retain their observed-change latches, including on partial responses.
+
+Selected review-request reactions are acquired in bounded GraphQL batches,
+with at most eight comment connections per response and 100 reactions per
+connection page. Bind each comment's node and database IDs, repository and PR
+to the complete REST inventory. Follow each unfinished connection independently
+until its unique reaction count equals a stable `totalCount`; missing nodes,
+GraphQL errors, repeated IDs/cursors, count drift and partial pages fail closed.
+Never fall back to an incomplete REST or GraphQL inventory to produce success.
+
+GraphQL represents the official Codex reaction account as `User`, so its
+typename or `[bot]` login suffix cannot attest REST `Bot` provenance. Each fresh
+carrier pass that observes an official reaction independently reads the exact
+official account through REST, requires its canonical ID/login and `Bot` type,
+and binds the GraphQL reaction author's database ID to that account. The
+account observation is shared only inside that pass, never across snapshots.
+Reaction IDs, times, provenance and history fingerprints feed the unchanged
+reducer. Unrelated actor types cannot authorize review requests.
+
+The page budget counts fetched pagination responses, including empty ones:
+one combined GraphQL response consumes one page, not one page per nested
+connection. Every nested raw object still counts against object capacity;
+response-byte, total-byte, attempt, deadline and batch-size caps remain in
+force. This lowers network fan-out without hiding unbounded evidence.
+
+Exact REST comment/review refetches and missing-pending-review confirmation
+remain mandatory. Opening and closing carrier inventories are still fresh
+GitHub reads, and two complete snapshots still underpin stable success.
+Batching is transport optimization, not an atomic GitHub transaction or a
+comparison of a cached evidence set with itself.
+
 The fingerprint is a deterministic representation of every decision-relevant
 value in that snapshot. It is only an equality check between fresh reads, not
 a durable receipt.
@@ -725,9 +811,21 @@ The profiles are policy, not arbitrary dispatch numbers:
 
 | Profile | Pages | Raw objects | API attempts | Snapshot | Request timeout | Reconcile budget |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `default` | 20 | 2,000 | 128 | 32 MiB | 10 s | 60 s |
-| `expanded` | 100 | 10,000 | 512 | 64 MiB | 20 s | 300 s |
+| `default` | 100 | 2,000 | 128 | 32 MiB | 10 s | 60 s |
+| `expanded` | 500 | 10,000 | 512 | 64 MiB | 20 s | 300 s |
 | hard ceiling | 1,000 | 20,000 | 2,048 | 64 MiB | 30 s | 720 s |
+
+The page cap is aggregate within each complete snapshot, including opening and
+closing pagination responses and each reaction batch's first page. It is not a
+per-endpoint cap or a review-round limit. Under the original per-comment REST
+reaction acquisition, ordinary multi-round PRs could exhaust 20 pages despite
+a small comment count, so the default now permits 100 pages. Batching reduces
+actual responses without pruning historical reactions or changing other default
+limits. The expanded profile permits 500 pages. Default page exhaustion uses
+`use_expanded_limits` only when expanded raises the effective ceiling;
+expanded exhaustion, or protected custom caps that expanded cannot improve,
+requires `raise_protected_limit`. Every capacity remains finite and fail-closed;
+a higher page ceiling does not waive attempt, object, byte or time caps.
 
 Page size is 100, one response is capped at 8 MiB, the clean inter-read delay
 is five seconds and the workflow job timeout is 14 minutes. Repositories with
@@ -794,14 +892,15 @@ links when useful, but never tokens, headers, raw payload dumps or untrusted
 workflow commands.
 
 At-least-once recovery may create small duplicate requests, verifier attempts
-or diagnostic comments after an unknown write result. The sticky writer does
-not fold, patch or delete existing canonical diagnostics: it fresh-reads before
-creation, leaves duplicates untouched and reports them. Only each exact,
-unedited, official canonical sticky receives the narrow physical-lineage
-exemption; a non-qualifying marker-looking duplicate remains a conservative
-boundary. Physical review requests likewise remain separate generation
-boundaries. No duplicate authorises selection of a convenient clean or omission
-of a finding.
+or diagnostic comments after an unknown write result. `report-completion`
+fresh-reads before updating or creating the single diagnostic; it leaves
+duplicates untouched and reports them. It never folds or deletes comments.
+Only each exact, official canonical sticky with the required binding receives
+the narrow physical-lineage exemption; a non-qualifying marker-looking
+duplicate remains a conservative boundary. An edited or stale diagnostic is
+never review evidence. Physical review requests likewise remain separate
+generation boundaries. No duplicate authorises selection of a convenient clean
+or omission of a finding.
 
 ## Exact-head merge closure
 
