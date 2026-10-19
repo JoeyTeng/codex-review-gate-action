@@ -101,11 +101,23 @@ ruleset 必须同时要求以下服务器端条件：
 - bypass actors 为空。
 
 GitHub required check 的 `integration_id: 15368` 只标识整个 GitHub Actions App
-（the entire GitHub Actions App），不能只标识任一 workflow。两份 canonical workflow
-exact-byte verification、fail-closed workflow inventory、受管 CODEOWNERS、required Code
-Owner review、stale-approval dismissal、strict up-to-date、no bypass actors 与 canary
-collision checks 共同构成 compound control-plane boundary；这不是单一 workflow 的
-cryptographic proof。
+（the entire GitHub Actions App），不能标识某个 workflow 或唯一 producer。普通 current-v2
+installer 会 exact-byte 验证两份 canonical
+workflows，并对 workflow 源文本执行 best-effort scoped keyword scan，查找额外 Codex gate caller
+和 reserved `codex/github-review-gate` signal 的显式使用。被拆分的文本、literal concatenation
+与简单 local-variable 形式会在可识别时扫描；只有扫描器识别出的明确命中才会阻止安装。
+只有已检测到但无法分类的候选才会告警；不支持或未识别的 literal 格式可能漏检，没有 warning
+不能证明不存在其他 producer。无关 keyword/context 不作为阻塞条件；普通文本引用（例如 `echo`、
+`jq` 或 artifact label）可能显示为 non-blocking reference warning，但不会被视为 gate collision
+或阻塞安装。Unrelated workflow-local write permission 与 opaque workflow-local permission
+声明是 operator-trust warnings，不要求删除权限或隔离无关 publisher。Repository-wide
+`default_workflow_permissions=read` preflight 仍是严格门槛；canonical workflow permissions、
+受管 CODEOWNERS、required Code Owner review、stale-approval dismissal、strict up-to-date、
+no bypass actors 与 canary checks 也保持严格。Scan 不执行 workflows、不证明完整 data flow、不
+防止恶意同名 signal forgery，也不建立唯一 producer。冻结的历史 organization handoff、
+bridge-removal 与 source-only proof 合约仍保持严格。
+
+已接受的扫描覆盖边界与例子见[workflow 扫描风险说明](https://github.com/Joey-Tools/codex-review-gate/blob/master/docs/install/workflow-scan-risk-boundary.md)。
 
 在无害 canary 证明实际 native CheckRun source 和完整接线前，保持导入的 ruleset disabled。
 [人类可读指南](https://github.com/Joey-Tools/codex-review-gate/blob/master/docs/install/human.zh-CN.md)
@@ -659,14 +671,20 @@ gh pr merge "$PR_NUMBER" \
 
 ## 支持边界
 
-stable v2.0 支持 GitHub.com public/private repositories；以 default branch 为 base
-的 open、non-draft PR 及普通 same-repository branches；GitHub-hosted Linux
-runners（优先 `ubuntu-slim`，采用 `ubuntu-latest` fallback）；以及普通 merge、
-squash 和 rebase methods。
+当前 v2 支持 GitHub.com public/private repositories；以 default branch 为 base
+的 open、non-draft PR 及普通 same-repository branches；GitHub-hosted 或 self-hosted
+环境中的 Linux runners；以及普通 merge、squash 和 rebase methods。默认 runner
+选择仍是 `ubuntu-slim`，采用 `ubuntu-latest` fallback。已安装 workflow 中显式配置的
+`runs-on` expression 仍然有效；这些默认值只在该配置采用默认选择时生效。
 
-GHES、forks、merge queues、non-default bases、drafts、bot-owned PRs、
-self-hosted/Windows/macOS runners，以及对 closed/merged PR 发起的新 operation 都会
-fail closed。
+GHES、forks、merge queues、non-default bases、drafts、bot-owned PRs、Windows/macOS
+runners，以及对 closed/merged PR 发起的新 operation 都会 fail closed。
+
+选择 self-hosted Linux runner 是基于 operator 信任的假设：operator 负责 runner
+host 及其隔离。Action 不会证明 host integrity 或 isolation；独立 GitHub jobs 也不提供
+host isolation。必须信任能够接收 controller token 的 host。Action 不要求额外的 runner-specific
+trust flag、allowlist、host API、attestation 或 approval mechanism；这不改变独立的 workflow
+或 environment approval 要求。
 
 runtime 只调用 API，不 checkout 或执行 consumer/PR code，不上传 artifacts，不保留
 raw API payload，也不引入 runtime GitHub App。diagnostics 只是 best effort，绝不

@@ -117,11 +117,30 @@ The ruleset must require all server-side conditions:
 - bypass actors are empty.
 
 GitHub's required-check `integration_id: 15368` identifies the entire GitHub
-Actions App, not either workflow alone. Exact-byte verification of both
-canonical workflows, fail-closed workflow inventory, the managed CODEOWNERS
-rules, required Code Owner review, stale-approval dismissal, strict up-to-date
-policy, no bypass actors and canary collision checks form one compound
-control-plane boundary. This is not cryptographic proof of one workflow.
+Actions App, not a particular workflow or unique producer. The ordinary
+current-v2 installer exact-byte verifies both canonical workflows and uses a
+best-effort scoped keyword scan of workflow source text for additional Codex
+gate callers and uses of the reserved `codex/github-review-gate` signal.
+Fragmented text, literal concatenations and simple local-variable forms are
+scanned where possible; only explicit matches recognized by the scanner block
+installation. Only detected candidates that
+cannot be classified warn; unsupported literal forms may be missed, so no
+warning does not prove the absence of another producer. Unrelated keywords
+and contexts do not block installation. Plain-text references such as `echo`,
+`jq` or artifact labels may appear as non-blocking reference warnings; they
+are not treated as gate collisions. Unrelated workflow-local write permissions and opaque
+workflow-local permission declarations are operator-trust warnings, not
+installation blockers, and do not require unrelated publishers to be
+isolated. The repository-wide `default_workflow_permissions=read` preflight
+remains strict. Canonical workflow permissions, managed CODEOWNERS rules,
+required Code Owner review, stale-approval dismissal, strict up-to-date policy,
+no bypass actors and canary checks also remain strict. The scan does not
+execute workflows, prove complete data flow, prevent malicious same-name
+forgery, or establish a unique producer. Frozen historical organization
+handoff, bridge-removal and source-only proof contracts remain strict.
+
+See the [workflow scan risk boundary](https://github.com/Joey-Tools/codex-review-gate/blob/master/docs/install/workflow-scan-risk-boundary.md)
+for accepted coverage limits and examples.
 
 Keep the imported ruleset disabled until a harmless canary has proved the
 actual native CheckRun source and complete wiring. The
@@ -842,14 +861,25 @@ Direct human UI merge outside this closure is unsupported.
 
 ## Supported boundary
 
-Stable v2.0 supports GitHub.com public and private repositories; ordinary
+Current v2 releases support GitHub.com public and private repositories; ordinary
 same-repository branches with an open, non-draft PR targeting the default
-branch; GitHub-hosted Linux runners (`ubuntu-slim`, with `ubuntu-latest` as the
-adopted fallback); and ordinary merge, squash and rebase methods.
+branch; Linux runners in GitHub-hosted or self-hosted environments; and
+ordinary merge, squash and rebase methods. The default runner selection remains
+`ubuntu-slim`, with `ubuntu-latest` as the adopted fallback. The installed
+workflow's explicit `runs-on` expression remains authoritative; these defaults
+apply only when its configured selection falls back to them.
 
 It fails closed for GHES, forks, merge queues, non-default bases, drafts,
-bot-owned PRs, self-hosted/Windows/macOS runners, and new operations on closed
-or merged PRs.
+bot-owned PRs, Windows/macOS runners, and new operations on closed or merged
+PRs.
+
+Selecting a self-hosted Linux runner is an operator trust assumption: the
+operator is responsible for the runner host and its isolation. The Action does
+not attest to host integrity or isolation, and separate GitHub jobs do not
+provide host isolation. The token-bearing controller host must be trusted. No
+additional runner-specific trust flag, allowlist, host API, attestation, or
+approval mechanism is required by the Action; this does not change any
+separate workflow or environment approval requirements.
 
 The runtime is API-only. It does not check out or execute consumer/PR code,
 upload artifacts, retain raw API payloads, or introduce a runtime GitHub App.
