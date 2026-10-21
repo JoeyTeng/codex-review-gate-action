@@ -537,7 +537,13 @@ resolves them unambiguously to the selected full head SHA.
 
 The conservative cutoff is not the exact PR `synchronize` time; Git commit
 dates and unverified event timestamps are never fallbacks. This recovery does
-not clear findings or provider errors, nor does it forgive edited, deleted,
+not clear findings or unknown provider errors. Only the recognised earlier
+service failure and an otherwise valid official clean receipt with a wholly
+missing Reviewed commit marker may be superseded by a later eligible request
+and its valid current-head recovery clean. A hashless receipt never supplies
+positive authority or a guessed SHA. Duplicate/malformed markers, invalid
+disclosure, extra unknown content and finding-bearing receipts do not qualify.
+Recovery does not forgive edited, deleted,
 scope-drifted or ambiguous evidence. It still requires complete
 inventory, exact refetches and two stable snapshots. Historical request
 liveness alone is not a veto: an older request's unclosed official `eyes`
@@ -761,8 +767,17 @@ Action outputs.
 
 `healthy/pending` cannot safely authorise success even when the evaluator
 completed trustworthily; it is not a weak success. Every result, including
-pending and not-applicable results, must follow its `recovery_code`. Only
-`wait_provider` is a pure wait without another repair or reconcile action.
+pending and not-applicable results, must follow its `recovery_code` and concrete
+next action. `wait_provider` means a qualifying terminal result is not yet
+available; it does not by itself prove that the PR must be replaced. Wait while
+the review is running. If it finished with findings that are now resolved, an
+intact, unedited request history without a base epoch may use the current-head
+clean recovery above: post one fresh eligible `@codex review`, obtain its
+subsequent trusted unedited exact-head clean, and reconcile. The existing
+provider event normally requests that reconcile automatically. Missing clean
+evidence alone is not an unclosable-history verdict; edited, deleted or otherwise
+unclosable evidence still requires the indicated repair or replacement path.
+This guidance never changes the pending verdict or waives finding/history checks.
 
 When they can be derived without another evidence query, the sticky diagnostic
 and Actions summary report:

@@ -478,8 +478,13 @@ authority；后续 clean 仍须独立满足上文的 trusted、未编辑、精�
 request 的归因缺口，包括由更早、针对不同 head 的 request 留下的缺口；也不要求每个旧 request
 必须由自己的后续 `+1` 结清。历史不会被删除或标为已完成。`C` 之前有效的非终态 provider
 activity 并不能证明旧 flight 必须先完成；`C` 当时或之后的相关 activity，以及更新的 physical
-request boundary，仍会阻塞。恢复不清除 findings 或未知 provider errors；只有上文明确识别且更早的
-service-failure carrier 允许被后续 witness 取代。仍不豁免 unknown、edited、
+request boundary，仍会阻塞。恢复不清除 findings 或未知 provider errors；上文明确识别且更早的
+service-failure carrier 允许被后续 witness 取代。另一个窄例外是：official 顶层 clean receipt
+的其余正文合规，但完全缺少 Reviewed commit marker。它仍属于 malformed，不会被猜测绑定到
+任何 commit，也不提供 positive authority；只有更晚的合格 request 及其独立有效的 current-head
+recovery clean，才能使这个旧 missing-marker error 不再阻塞。结论、可选 disclosure、时间与
+official provenance 必须全部有效，且不能夹带 finding。重复或格式错误的 marker、无效 disclosure、
+未知额外正文及其他 parse error 都不适用。仍不豁免 unknown、edited、
 deleted、forged、scope-drifted 或 ambiguous evidence。仍须完成 inventory、exact refetch 和两轮
 稳定 snapshot。新的 verifier run ID 使用自己的 cutoff，不继承旧 witness。
 
@@ -760,7 +765,7 @@ immediate retry 是否为有效 recovery operation。closed recovery-code set �
 | `healthy/success` | 两次稳定完整 snapshots 证明 current-head clean。 |
 | `healthy/failure` | 已证明符合条件的 findings。 |
 | `unhealthy/failure` | 已证明 findings，但 execution 或 final result handling 同时失败。 |
-| `healthy/pending` | evaluation 安全完成，但 current state 尚不能授权 success；必须遵循 `recovery_code`，只有 `wait_provider` 是 pure wait。 |
+| `healthy/pending` | evaluation 安全完成，但 current state 尚不能授权 success；必须遵循 `recovery_code`；`wait_provider` 表示尚无合格的 terminal result。 |
 | `unhealthy/pending` | API、pagination、cap 或 stability execution 不完整。 |
 | `healthy/not_applicable` | delayed automatic event 已 stale。 |
 | `unhealthy/not_applicable` | manual target 无效或 scope 不受支持。 |
@@ -777,7 +782,13 @@ runtime merge-ref、event head/base 与 fresh-read 校验把 success 绑定到 u
 result。direct status projection 与 `statusProjection` 已删除。
 
 每个结果都必须结合自己的 `recovery_code` 解读；health/outcome pair 本身不是操作
-指令。Only `wait_provider` 是 pure wait。
+指令。`wait_provider` 本身不表示必须更换 PR。review 仍在运行时先等待；若可信、未经编辑的
+exact-head clean 已经存在，直接 reconcile。若 review 已结束且没有合格的 current-head clean，先解决
+所有 findings。只有 request history 完整、未编辑且没有 base epoch 时，才可使用 fresh current-head
+clean recovery：在原 PR 发出一条新的合格 `@codex review`，取得随后出现的可信、未经编辑的
+exact-head clean，再 reconcile。新请求或等待不会清除 findings，也不会豁免 history 校验。单纯缺少 clean
+不能证明 history 无法闭合。已编辑、已删除或其他确实无法闭合的 evidence，仍须按指引修复或走
+replacement 路径。这些提示不会改变 pending 判定。
 
 无需额外 evidence query 时，summary 和 sticky 会报告 `findings_unresolved`、`findings_resolved`、
 `findings_historical` 与 `findings_indeterminate`。review-thread diagnostics 另放在

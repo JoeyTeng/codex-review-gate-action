@@ -583,8 +583,16 @@ request to acquire its own closing `+1`. This does not delete the history or
 label those requests completed. Valid nonterminal provider activity before
 `C` does not prove that an older flight must finish first; relevant activity at
 or after `C`, or a newer request boundary, remains blocking. The recovery does
-not clear findings or unknown provider errors. Only the explicitly recognised
-older service-failure carrier above may be superseded; this does not waive unknown, edited,
+not clear findings or unknown provider errors. The explicitly recognised
+older service-failure carrier above may be superseded. One other narrow
+non-clean category is an otherwise valid official top-level clean receipt
+whose Reviewed commit marker is completely absent. It remains malformed and
+never gains a guessed commit binding or positive authority. Only a later
+eligible request and its independently valid current-head recovery clean may
+supersede that earlier missing-marker error. The conclusion, optional
+disclosure, timestamps and official provenance must otherwise be valid, with
+no finding content. Duplicate or malformed markers, invalid disclosure,
+unknown extra content and other parse errors do not qualify. This does not waive unknown, edited,
 deleted, forged, scope-drifted or ambiguous evidence. It requires complete
 inventory, exact refetches and two stable snapshots. A new verifier run ID has
 a new cutoff and cannot inherit the witness.
@@ -928,7 +936,7 @@ Legal semantic combinations are:
 | `healthy/success` | Two stable complete snapshots proved current-head clean. |
 | `healthy/failure` | Qualifying findings were proved. |
 | `unhealthy/failure` | Findings were proved but execution or final result handling also failed. |
-| `healthy/pending` | Evaluation completed safely, but current state cannot authorise success yet. Follow `recovery_code`; only `wait_provider` is a pure wait. |
+| `healthy/pending` | Evaluation completed safely, but current state cannot authorise success yet. Follow `recovery_code`; `wait_provider` means no qualifying terminal result is yet available. |
 | `unhealthy/pending` | API, pagination, cap or stability execution is incomplete. |
 | `healthy/not_applicable` | A delayed automatic event is stale. |
 | `unhealthy/not_applicable` | A manual target is invalid or the scope is unsupported. |
@@ -949,7 +957,17 @@ never supplies the required PR result. Direct status projection and
 `statusProjection` are deleted.
 
 Every result is interpreted through its `recovery_code`; the health/outcome
-pair is not an instruction by itself. Only `wait_provider` is a pure wait.
+pair is not an instruction by itself. `wait_provider` does not by itself prove
+that the PR must be replaced. Wait while the review is running; if a trusted,
+unedited exact-head clean is already available, reconcile it. If the review
+finishes without a qualifying current-head clean, resolve all findings first.
+Only an intact, unedited request history with no base epoch may use fresh
+current-head clean recovery: post one fresh eligible `@codex review`, obtain
+its subsequent trusted unedited exact-head clean, then reconcile. A new request
+or wait never clears findings or waives history checks. A missing clean alone
+is not an unclosable-history verdict. Edited, deleted or otherwise unclosable
+evidence still requires the indicated repair or replacement path. This
+guidance never changes the pending verdict.
 
 When no additional evidence query is needed, the summary and sticky report
 `findings_unresolved`,
